@@ -16,7 +16,7 @@ typedef struct lval {
     struct lval** cell;    
 } lval;
 
-enum {LVAL_NUM, LVAL_ERR, LVAL_SYM, LVAL_SEXPR};
+enum {LVAL_NUM, LVAL_ERR, LVAL_SYM, LVAL_SEXPR, LVAL_QEXPR};
 enum {LERR_DIV_ZERO, LERR_BAD_OPERATOR, LERR_BAD_NUM};
 
 char *readline(char *prompt) {
@@ -62,6 +62,14 @@ lval *lval_make_s_expr() {
     return ans;
 }
 
+lval *lval_make_q_expr() {
+    lval *ans = malloc(sizeof(lval));
+    ans->type = LVAL_QEXPR;
+    ans->count = 0;
+    ans->cell = NULL;
+    return ans;
+}
+
 void lval_delete(lval *cur) {
     switch (cur->type) {
         case LVAL_NUM: break;
@@ -71,6 +79,8 @@ void lval_delete(lval *cur) {
         case LVAL_ERR:
             free(cur->err);
             break;
+
+        case LVAL_QEXPR:
         case LVAL_SEXPR:
             for (int i = 0;i < cur->count;i++) free(cur->cell[i]);
             free(cur->cell);
@@ -101,72 +111,49 @@ lval *lval_read(mpc_ast_t *cur) {
     lval *x = NULL;
     if (strcmp(cur->tag, ">") == 0) { x = lval_make_s_expr(); }
     if (strstr(cur->tag, "s_expression")) { x = lval_make_s_expr(); }
+    if (strstr(cur->tag, "q_expression")) { x = lval_make_q_expr(); }
 
     for (int i = 0;i < cur->children_num;i++) {
         if (strcmp(cur->children[i]->contents, "(") == 0) continue;
         if (strcmp(cur->children[i]->contents, ")") == 0) continue;
+        if (strcmp(cur->children[i]->contents, "{") == 0) continue;
+        if (strcmp(cur->children[i]->contents, "}") == 0) continue;
         if (strcmp(cur->children[i]->tag, "regex") == 0) continue;
         x = lval_add(x, lval_read(cur->children[i]));
     }
     return x;
 }
 
-void lval_print(lval *cur) {
-    if (cur->type == LVAL_NUM) {
-        printf("%ld", cur->num);
-        return;
+void lval_print(lval *cur);
+
+void lval_print_expr(lval *cur, char *open, char *close) {
+    printf("%s", open);
+    for (int i = 0;i < cur->count;i++) {
+        lval_print(cur->cell[i]);
+        if (i < cur->count - 1) printf(" ");
     }
-    if (cur->type == LVAL_SYM) {
-        printf("%s", cur->sym);
-        return;
-    }
-    if (cur->type == LVAL_ERR) {
-        printf("%s", cur->err);
-        return;
-    }
-    if (cur->type == LVAL_SEXPR) {
-        printf("( ");
-        for (int i = 0;i < cur->count;i++) {
-            lval_print(cur->cell[i]);
-            if (i < cur->count - 1) printf(" ");
-        }
-        printf(") ");
-    }
+    printf("%s", close);
 }
 
-// lval evaluate_operation(lval a, lval b, char *oper) {
-//     if (a.type == LVAL_ERR) return a;
-//     if (b.type == LVAL_ERR) return b;
-
-//     long f = a.num;
-//     long s = b.num;
-//     if (strstr(oper,"+")) return make_num(f + s);
-//     if (strstr(oper,"-")) return make_num(f - s);
-//     if (strstr(oper,"*")) return make_num(f * s);
-//     if (strstr(oper,"/")) return (s != 0 ? make_num(f/s) : make_error(LERR_DIV_ZERO));
-//     //assert(0==1);
-//     return (lval){LVAL_ERR, 0, LERR_BAD_OPERATOR};
-// }
-
-// lval evaluate(mpc_ast_t *cur) {
-//     if (strstr(cur->tag, "number")) {
-//         errno = 0;
-//         long cur_val = strtol(cur->contents, NULL, 10);
-//         return (errno == 0 ? make_num(cur_val) : make_error(LERR_BAD_NUM));
-//     }
-//     //children[0] is regex or '('
-//     char *oper = cur->children[1]->contents;
-//     lval val = evaluate(cur->children[2]);
-    
-//     for (int i = 3;i < cur->children_num;i++) {
-//         if (strstr(cur->children[i]->tag, "expression")) {
-//             // assert(0==1);
-//             lval cur_val = evaluate(cur->children[i]);
-//             val = evaluate_operation(val, cur_val, oper);
-//         }
-//     }
-//     return val;
-// }
+void lval_print(lval *cur) {
+    switch (cur->type) {
+        case LVAL_NUM:
+            printf("%ld", cur->num);
+            break;
+        case LVAL_SYM:
+            printf("%s", cur->sym);
+            break;
+        case LVAL_ERR:
+            printf("%s", cur->err);
+            break;
+        case LVAL_SEXPR:
+            lval_print_expr(cur, "(", ")");
+            break;
+        case LVAL_QEXPR:
+            lval_print_expr(cur, "{", "}");
+            break;
+    }
+}
 
 lval *lval_pop(lval *cur, int ind) {
     lval *ans = cur->cell[ind];
@@ -250,16 +237,18 @@ int main(void) {
     mpc_parser_t *Number = mpc_new("number");
     mpc_parser_t *Symbol = mpc_new("symbol");
     mpc_parser_t *S_expression = mpc_new("s_expression");
+    mpc_parser_t *Q_expression = mpc_new("q_expression");
     mpc_parser_t *Expression = mpc_new("expression");
     mpc_parser_t *Lispy = mpc_new("lispy");
 
     mpca_lang(MPCA_LANG_DEFAULT,
     " number : /-?[0-9]+/; "
-    " symbol : '+' | '-' | '*' | '/'; "
+    " symbol : '+' | '-' | '*' | '/' | \"head\" | \"tail\"; "
     " s_expression : '(' <expression>* ')' ; "
-    " expression : <number> | <symbol> | <s_expression> ;"
+    " q_expression : '{' <expression>* '}' ; "
+    " expression : <number> | <symbol> | <s_expression> | <q_expression> ;"
     " lispy : /^/ <expression>* /$/; ",
-    Number, Symbol, S_expression, Expression, Lispy, NULL
+    Number, Symbol, S_expression, Q_expression, Expression, Lispy, NULL
     );
 
     while (1) {
@@ -270,7 +259,6 @@ int main(void) {
         if (mpc_parse("input", input, Lispy, &r)) {
             lval *ans = lval_read(r.output); 
             // lval_print(ans);
-            // printf("\n");
             lval_print(lval_eval(ans));
             printf("\n");
             // mpc_ast_print(r.output);
@@ -283,6 +271,6 @@ int main(void) {
         free(input);
     }
     
-    mpc_cleanup(5, Number, Symbol, S_expression, Expression, Lispy);
+    mpc_cleanup(6, Number, Symbol, S_expression, Q_expression, Expression, Lispy);
     return 0;
 }
