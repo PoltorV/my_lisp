@@ -3,6 +3,9 @@
 #include <assert.h>
 #include "mpc.h"
 
+#define LASSERT(args, cond, err) \
+    if (!(cond)) { lval_delete(args); return lval_make_error(err); }
+
 static char buffer[2048];
 
 typedef struct lval {
@@ -179,7 +182,7 @@ lval *lval_eval_op(lval *f, lval *s, char *op) {
     return lval_make_error("ERROR: INVALID OPERATOR");
 }
 
-lval *lval_eval_builtin(lval *cur, char *sym) {
+lval *lval_op_builtin(lval *cur, char *sym) {
     for (int i = 0;i < cur->count;i++) {
         if (cur->cell[i]->type != LVAL_NUM) {
             lval_delete(cur);
@@ -205,8 +208,79 @@ lval *lval_eval_builtin(lval *cur, char *sym) {
     return first;
 }
 
+lval *lval_head_builtin(lval *cur) {
+    LASSERT(cur, cur->count == 1, "ERROR: cant take head of many q-expressions")
+    LASSERT(cur, cur->cell[0]->type == LVAL_QEXPR, "ERROR: cant take head of not q-expression")
+    LASSERT(cur, cur->cell[0]->count != 0, "ERROR: size of q-expression is zero")
+
+    lval *child = lval_take(cur, 0);
+    while (child->count > 1) {
+        lval_delete(lval_pop(child, 1));
+    }
+    return child;
+}
+
+lval *lval_tail_builtin(lval *cur) {
+    LASSERT(cur, cur->count == 1, "ERROR: cant take head of many q-expressions")
+    LASSERT(cur, cur->cell[0]->type == LVAL_QEXPR, "ERROR: cant take head of not q-expression")
+    LASSERT(cur, cur->cell[0]->count != 0, "ERROR: size of q-expression is zero")
+
+    lval *child = lval_take(cur, 0);
+    lval_delete(lval_pop(child, 0));
+    return child;
+}
+
+lval *lval_list_builtin(lval *cur) {
+    LASSERT(cur, cur->count > 0, "ERROR: list size is zero")
+    
+    lval *ans = lval_make_q_expr();
+    while (cur->count > 0) {
+        lval_add(ans, lval_pop(cur, 0));
+    }
+    lval_delete(cur);
+    return ans;
+}
+
+void lval_join_child(lval *cur, lval *child) {
+    while (child->count > 0) {
+        lval_add(cur, lval_pop(child, 0));
+    }
+    lval_delete(child);
+}
+
+lval *lval_join_builtin(lval *cur) {
+    LASSERT(cur, cur->count > 0, "ERROR: cant join nothing")
+    for (int i = 0;i < cur->count;i++)
+        LASSERT(cur, cur->cell[i]->type == LVAL_QEXPR, "ERROR: cant join not Q-expression")
+    lval *ans = lval_make_q_expr();
+    while (cur->count > 0) {
+        lval_join_child(ans, lval_pop(cur, 0));
+    }
+    lval_delete(cur);
+    return ans;
+}
 
 lval *lval_eval(lval *cur);
+
+lval *lval_eval_builtin(lval *cur) {
+    LASSERT(cur, cur->count == 1, "ERROR: can eval only 1 Q-expression")
+    LASSERT(cur, cur->cell[0]->type == LVAL_QEXPR, "ERROR: eval not Q-expression")
+    lval *child = lval_take(cur, 0);
+    child->type = LVAL_SEXPR;
+    return lval_eval(child);
+}
+
+lval *lval_operation_builtin(lval *cur, char *sym) {
+    if (strstr("+-/*", sym)) return lval_op_builtin(cur, sym);
+    if (strcmp(sym, "head") == 0) return lval_head_builtin(cur);
+    if (strcmp(sym, "tail") == 0) return lval_tail_builtin(cur);
+    if (strcmp(sym, "list") == 0) return lval_list_builtin(cur);
+    if (strcmp(sym, "join") == 0) return lval_join_builtin(cur);
+    if (strcmp(sym, "eval") == 0) return lval_eval_builtin(cur);
+    return lval_make_error("ERROR: unknown operator");
+}
+
+// lval *lval_eval(lval *cur);
 
 lval *lval_eval_s_expression(lval *cur) {
     for (int i = 0;i < cur->count;i++) cur->cell[i] = lval_eval(cur->cell[i]);
@@ -221,7 +295,7 @@ lval *lval_eval_s_expression(lval *cur) {
     lval *f = lval_pop(cur, 0);
     if (f->type != LVAL_SYM) return lval_make_error("ERROR: S-expression doesnt start with a symbol");
 
-    lval *ans = lval_eval_builtin(cur, f->sym);
+    lval *ans = lval_operation_builtin(cur, f->sym);
     lval_delete(f);
     return ans;
 }
@@ -243,7 +317,7 @@ int main(void) {
 
     mpca_lang(MPCA_LANG_DEFAULT,
     " number : /-?[0-9]+/; "
-    " symbol : '+' | '-' | '*' | '/' | \"head\" | \"tail\"; "
+    " symbol : '+' | '-' | '*' | '/' | \"head\" | \"tail\" | \"list\" | \"join\" | \"eval\"; "
     " s_expression : '(' <expression>* ')' ; "
     " q_expression : '{' <expression>* '}' ; "
     " expression : <number> | <symbol> | <s_expression> | <q_expression> ;"
