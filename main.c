@@ -188,7 +188,7 @@ lval *lval_eval_op(lval *f, lval *s, char *op) {
     if (strcmp(op, "-") == 0) return lval_make_num(f->num - s->num);
     if (strcmp(op, "*") == 0) return lval_make_num(f->num * s->num);
     if (strcmp(op, "/") == 0) 
-        return (s->num != 0 ? lval_make_num(f->num + s->num) : lval_make_error("ERROR: DIVISION by ZERO"));
+        return (s->num != 0 ? lval_make_num(f->num / s->num) : lval_make_error("ERROR: DIVISION by ZERO"));
     return lval_make_error("ERROR: INVALID OPERATOR");
 }
 
