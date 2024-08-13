@@ -372,6 +372,22 @@ lval *lval_eval_builtin(lenv *env, lval *cur) {
     return lval_eval(env, child);
 }
 
+lval *lval_def_builtin(lenv *env, lval *cur) {
+    /// synax is different
+    // example def {a b} {1 2}
+    LASSERT(cur, cur->count == 2, "ERROR: cant make a right variables")
+    LASSERT(cur, cur->cell[0]->count == cur->cell[1]->count, "ERROR: count of variables and defenitions is not equal")
+    for (int i = 0;i < cur->cell[0]->count;i++)
+        LASSERT(cur, cur->cell[0]->cell[i]->type == LVAL_SYM, "ERROR: variable does not have right name")
+    
+    for (int i = 0;i < cur->cell[0]->count;i++) {
+        // printf("%s %ld\n", cur->cell[0]->cell[i]->sym, cur->cell[1]->cell[i]->num);
+        env = lenv_put(env, cur->cell[0]->cell[i], cur->cell[1]->cell[i]);
+    }
+    lval_delete(cur);
+    return lval_make_s_expr();
+}
+
 lval *lval_builtin_add(lenv* env, lval* a) {
     return lval_op_builtin(env, a, "+");
 }
@@ -406,6 +422,7 @@ void lenv_add_functions(lenv *env) {
     lenv_add_builtin_functions(env, "join", lval_join_builtin);
     lenv_add_builtin_functions(env, "list", lval_list_builtin);
     lenv_add_builtin_functions(env, "eval", lval_eval_builtin);
+    lenv_add_builtin_functions(env, "def", lval_def_builtin);
 }
 
 // lval *lval_eval(lval *cur);
