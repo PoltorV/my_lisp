@@ -3,8 +3,12 @@
 #include <assert.h>
 #include "mpc.h"
 
-#define LASSERT(args, cond, err) \
-    if (!(cond)) { lval_delete(args); return lval_make_error(err); }
+// #define LASSERT(args, cond, err) \
+//     if (!(cond)) { lval_delete(args); return lval_make_error(err); }
+
+#define LASSERT(args, cond, err_format, ...) \
+    if (!(cond)) { lval *err = lval_make_error(err_format, ##__VA_ARGS__); lval_delete(args); return err; }
+
 
 static char buffer[2048];
 
@@ -53,11 +57,15 @@ lval *lval_make_num(long x) {
     return ans;
 }
 
-lval *lval_make_error(char *message) {
+lval *lval_make_error(char *format, ...) {
     lval *ans = malloc(sizeof(lval));
     ans->type = LVAL_ERR;
-    ans->err = malloc(strlen(message) + 1);
-    strcpy(ans->err, message);
+    ans->err = malloc(512);
+    va_list v;
+    va_start(v, format);
+    vsnprintf(ans->err, 511, format, v);
+    ans->err = realloc(ans->err, strlen(ans->err) + 1);
+    va_end(v);
     return ans;
 }
 
@@ -148,7 +156,7 @@ lval *lenv_get(lenv *env, lval *cur) {
             return lval_copy(env->vals[i]);
         }
     }
-    return lval_make_error("unbound symbol!");
+    return lval_make_error("unbound symbol '%s'", cur->sym);
 }
 
 lenv *lenv_put(lenv *env, lval *cur_name, lval *cur_fun) {
@@ -174,7 +182,7 @@ lval *lval_read(mpc_ast_t *cur) {
     if (strstr(cur->tag, "number")) {
         errno = 0;
         long cur_val = strtol(cur->contents, NULL, 10);
-        return (errno == 0 ? lval_make_num(cur_val) : lval_make_error("Error: bad NUMBER"));
+        return (errno == 0 ? lval_make_num(cur_val) : lval_make_error("Error: bad NUMBER %s", cur->contents));
     }
     if (strstr(cur->tag, "symbol")) {
         return lval_make_sym(cur->contents);
@@ -281,7 +289,7 @@ lval *lval_eval_op(lval *f, lval *s, char *op) {
     if (strcmp(op, "*") == 0) return lval_make_num(f->num * s->num);
     if (strcmp(op, "/") == 0) 
         return (s->num != 0 ? lval_make_num(f->num / s->num) : lval_make_error("ERROR: DIVISION by ZERO"));
-    return lval_make_error("ERROR: INVALID OPERATOR");
+    return lval_make_error("ERROR: INVALID OPERATOR %s", op);
 }
 
 lval *lval_op_builtin(lenv *env, lval *cur, char *sym) {
@@ -310,9 +318,21 @@ lval *lval_op_builtin(lenv *env, lval *cur, char *sym) {
     return first;
 }
 
+char* ltype_name(int t) {
+    switch(t) {
+        case LVAL_FUN: return "Function";
+        case LVAL_NUM: return "Number";
+        case LVAL_ERR: return "Error";
+        case LVAL_SYM: return "Symbol";
+        case LVAL_SEXPR: return "S-Expression";
+        case LVAL_QEXPR: return "Q-Expression";
+        default: return "Unknown";
+    }
+}
+
 lval *lval_head_builtin(lenv *env, lval *cur) {
-    LASSERT(cur, cur->count == 1, "ERROR: cant take head of many q-expressions")
-    LASSERT(cur, cur->cell[0]->type == LVAL_QEXPR, "ERROR: cant take head of not q-expression")
+    LASSERT(cur, cur->count == 1, "ERROR: cant take head of many q-expressions. Got %i, Expected %i.", cur->count, 1)
+    LASSERT(cur, cur->cell[0]->type == LVAL_QEXPR, "ERROR: cant take head of not q-expression. Got %s, Expected %s.", ltype_name(cur->cell[0]->type), ltype_name(LVAL_QEXPR))
     LASSERT(cur, cur->cell[0]->count != 0, "ERROR: size of q-expression is zero")
 
     lval *child = lval_take(cur, 0);
@@ -372,6 +392,20 @@ lval *lval_eval_builtin(lenv *env, lval *cur) {
     return lval_eval(env, child);
 }
 
+int lval_check_is_builtin_function(char *s) {
+    if (strcmp(s, "+") == 0) return 1;
+    if (strcmp(s, "-") == 0) return 1;
+    if (strcmp(s, "*") == 0) return 1;
+    if (strcmp(s, "/") == 0) return 1;
+    if (strcmp(s, "head") == 0) return 1;
+    if (strcmp(s, "tail") == 0) return 1;
+    if (strcmp(s, "list") == 0) return 1;
+    if (strcmp(s, "join") == 0) return 1;
+    if (strcmp(s, "def") == 0) return 1;
+    if (strcmp(s, "eval") == 0) return 1;
+    return 0;
+}
+
 lval *lval_def_builtin(lenv *env, lval *cur) {
     /// synax is different
     // example def {a b} {1 2}
@@ -382,6 +416,8 @@ lval *lval_def_builtin(lenv *env, lval *cur) {
     
     for (int i = 0;i < cur->cell[0]->count;i++) {
         // printf("%s %ld\n", cur->cell[0]->cell[i]->sym, cur->cell[1]->cell[i]->num);
+        if (lval_check_is_builtin_function(cur->cell[0]->cell[i]->sym) == 1) 
+            return lval_make_error("Cant make redefenition of builtin function");
         env = lenv_put(env, cur->cell[0]->cell[i], cur->cell[1]->cell[i]);
     }
     lval_delete(cur);
