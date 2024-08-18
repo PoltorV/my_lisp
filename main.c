@@ -648,6 +648,18 @@ void lenv_add_builtin_functions(lenv *env, char *name, lbuiltin func) {
     lval_delete(cur_lval_name);
 }
 
+lval *lval_fun_builtin(lenv *env, lval *cur) {
+    LASSERT_NUM("fun", cur, 2);
+    lval *formals = lval_pop(cur, 0);
+    // if (formals->count == 0)
+    lval *name = lval_pop(formals, 0);
+    lval *body = lval_pop(cur, 0);
+
+    lval *func = lval_make_lambda(formals, body);
+    lenv_put(env, name, func);
+    return lval_make_s_expr();
+}
+
 void lenv_add_functions(lenv *env) {
     lenv_add_builtin_functions(env, "+", lval_builtin_add);
     lenv_add_builtin_functions(env, "-", lval_builtin_sub);
@@ -662,6 +674,7 @@ void lenv_add_functions(lenv *env) {
     lenv_add_builtin_functions(env, "\\", lval_lambda_builtin);
     lenv_add_builtin_functions(env, "def", lval_def_builtin);
     lenv_add_builtin_functions(env, "=", lval_put_builtin);
+    lenv_add_builtin_functions(env, "fun", lval_fun_builtin);
 }
 
 // lval *lval_eval(lval *cur);
