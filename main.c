@@ -67,6 +67,8 @@ void lenv_delete(lenv *cur);
 lval *lval_eval(lenv *env, lval *cur);
 lval *lval_eval_builtin(lenv *env, lval *cur);
 char* ltype_name(int t);
+lval *lval_pop(lval *cur, int ind);
+lval *lval_list_builtin(lenv *env, lval *cur);
 
 char *readline(char *prompt) {
     fputs(prompt, stdout);
@@ -255,12 +257,58 @@ lval *lval_read(mpc_ast_t *cur) {
 lval *lval_call(lenv *env, lval *fun, lval *a) {
     if (fun->builtin != NULL) return fun->builtin(env, a);
 
-    for (int i = 0;i < a->count;i++)
-        lenv_put(fun->env, fun->formals->cell[i], a->cell[i]);
+    // for (int i = 0;i < a->count;i++)
+    //     lenv_put(fun->env, fun->formals->cell[i], a->cell[i]);
     
+    // lval_delete(a);
+    // fun->env->par = env;
+    // return lval_eval_builtin(fun->env, lval_add(lval_make_s_expr(), fun->body));
+    int arguments_count = a->count;
+    int formals_count = fun->formals->count;
+    while (a->count > 0) {
+        if (fun->formals->count == 0) {
+            lval_delete(a);
+            return lval_make_error("Function passed too many arguments. Got %i, Expected %i.", arguments_count, formals_count);
+        }
+        
+        lval *cur_formal = lval_pop(fun->formals, 0);
+        if (strcmp(cur_formal->sym, "&") == 0) {
+            if (fun->formals->count != 1) {
+                lval_delete(a);
+                return lval_make_error("Symbol '&' not followed by single symbol");
+            }
+
+            lval *list_name = lval_pop(fun->formals, 0);
+            lenv_put(fun->env, list_name, lval_list_builtin(env, a));
+            lval_delete(cur_formal);
+            lval_delete(list_name);
+            break;
+        }
+        lval *cur_val = lval_pop(a, 0);
+
+        lenv_put(fun->env, cur_formal, cur_val);
+        lval_delete(cur_formal);
+        lval_delete(cur_val);
+    }
+    if (fun->formals->count > 0 && strcmp(fun->formals->cell[0]->sym, "&") == 0) {
+        if (fun->formals->count != 2) {
+            lval_delete(a);
+            return lval_make_error("Symbol '&' not followed by single symbol");
+        }
+        lval_delete(lval_pop(fun->formals, 0));
+        lval *list_name = lval_pop(fun->formals, 0);
+        lval *val = lval_make_q_expr();
+        lenv_put(fun->env, list_name, val);
+        lval_delete(list_name);
+        lval_delete(val);
+    }
     lval_delete(a);
-    fun->env->par = env;
-    return lval_eval_builtin(fun->env, lval_add(lval_make_s_expr(), fun->body));
+    if (fun->formals->count == 0) {
+        fun->env->par = env;
+        return lval_eval_builtin(fun->env, lval_add(lval_make_s_expr(), fun->body));
+    }
+    else
+        return lval_copy(fun);
 }
 
 void lval_print(lval *cur);
