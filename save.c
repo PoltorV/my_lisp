@@ -167,7 +167,6 @@ void lval_delete(lval *cur) {
             break;
         case LVAL_QEXPR:
         case LVAL_SEXPR:
-            cur->count = 0;
             for (int i = 0;i < cur->count;i++) free(cur->cell[i]);
             free(cur->cell);
             break;
@@ -214,6 +213,7 @@ void lenv_put(lenv *env, lval *cur_name, lval *cur_fun) {
         if (strcmp(env->syms[i], cur_name->sym) == 0) {
             lval_delete(env->vals[i]);
             env->vals[i] = lval_copy(cur_fun);
+            return env;
         }
     }
 
@@ -266,7 +266,7 @@ lval *lval_call(lenv *env, lval *fun, lval *a) {
 void lval_print(lval *cur);
 
 void lval_print_expr(lval *cur, char *open, char *close) {
-    // if (cur->count == 0) return;
+    if (cur->count == 0) return;
     printf("%s", open);
     //printf("here");
     for (int i = 0;i < cur->count;i++) {
@@ -486,7 +486,7 @@ lval *lval_eval_builtin(lenv *env, lval *cur) {
     LASSERT(cur, cur->cell[0]->type == LVAL_QEXPR, "ERROR: eval not Q-expression")
     lval *child = lval_take(cur, 0);
     child->type = LVAL_SEXPR;
-    // lval_print(cur);
+    lval_print(cur);
     return lval_eval(env, child);
 }
 
@@ -525,9 +525,7 @@ int lval_check_is_builtin_function(char *s) {
 lval *lval_var_builtin(lenv *env, lval *cur, char *func) {
     /// synax is different
     // example def {a b} {1 2}
-    //not work properly because of eval not register functions in q-ecpression
-    //if use this syntax thwn in in eval_s_expression cell[i] = eval(cell[i]) dont work tight because of {}
-    //only copy letters but not make functions
+    //not work properly because of eval not register functions in q-ecpressions
 
     // LASSERT(cur, cur->count == 2, "ERROR: cant make a right variables")
     // LASSERT(cur, cur->cell[0]->count == cur->cell[1]->count, "ERROR: count of variables and defenitions is not equal")
@@ -549,23 +547,28 @@ lval *lval_var_builtin(lenv *env, lval *cur, char *func) {
     LASSERT_TYPE(func, cur, 0, LVAL_QEXPR);
     
     lval* syms = cur->cell[0];
-    for (int i = 0; i < syms->count; i++)
-        LASSERT(cur, (syms->cell[i]->type == LVAL_SYM), "Function '%s' cannot define non-symbol. Got %s, Expected %s.", func,  ltype_name(syms->cell[i]->type), ltype_name(LVAL_SYM));
-    
+    for (int i = 0; i < syms->count; i++) {
+        LASSERT(cur, (syms->cell[i]->type == LVAL_SYM),
+        "Function '%s' cannot define non-symbol. "
+        "Got %s, Expected %s.", func, 
+        ltype_name(syms->cell[i]->type), ltype_name(LVAL_SYM));
+    }
     
     LASSERT(cur, (syms->count == cur->count-1), "Function '%s' passed too many arguments for symbols. Got %i, Expected %i.", func, syms->count, cur->count-1);
         
     for (int i = 0; i < syms->count; i++) {
-        if (strcmp(func, "def") == 0) 
+        if (strcmp(func, "def") == 0) {
             lenv_def(env, syms->cell[i], cur->cell[i+1]);
+        }
         
-        
-        if (strcmp(func, "=") == 0)
+        if (strcmp(func, "=")   == 0) {
             lenv_put(env, syms->cell[i], cur->cell[i+1]);
+        } 
     }
     
     lval_delete(cur);
     return lval_make_s_expr();
+
 }
 
 lval *lval_builtin_add(lenv* env, lval* a) {
@@ -638,8 +641,9 @@ lval *lval_eval_s_expression(lenv *env, lval *cur) {
         lval_delete(f); lval_delete(cur);
         return err;
     }
+    // lval *ans = f->builtin(env, cur);
     lval *ans = lval_call(env, f, cur);
-    lval_delete(f);
+    // lval_delete(f);
     return ans;
 }
 
