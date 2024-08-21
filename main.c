@@ -57,18 +57,34 @@ struct lval {
     struct lval** cell;    
 };
 
-enum {LVAL_NUM, LVAL_ERR, LVAL_SYM, LVAL_FUN, LVAL_SEXPR, LVAL_QEXPR};
-// enum {LERR_DIV_ZERO, LERR_BAD_OPERATOR, LERR_BAD_NUM};
+enum {LVAL_NUM, LVAL_ERR, LVAL_SYM, LVAL_FUN, LVAL_SEXPR, LVAL_QEXPR, LVAL_BOOL};
+
+lval *lval_make_num(long x);
+lval *lval_make_error(char *format, ...);
+lval *lval_make_sym(char *sym);
+lval *lval_make_s_expr();
+lval *lval_make_q_expr();
+lval *lval_make_fun(lbuiltin func);
+lval *lval_make_lambda(lval *formals, lval *body);
 lenv *lenv_make();
-lenv *lenv_copy();
-void lenv_def(lenv *env, lval *name, lval *fun);
-lval *lval_call(lenv *env, lval *fun, lval *a);
+void lval_delete(lval *cur);
+lval *lval_copy(lval *cur);
 void lenv_delete(lenv *cur);
-lval *lval_eval(lenv *env, lval *cur);
-lval *lval_eval_builtin(lenv *env, lval *cur);
-char* ltype_name(int t);
-lval *lval_pop(lval *cur, int ind);
+lval *lval_add(lval *x, lval *add);
+lval *lenv_get(lenv *env, lval *cur);
+void lenv_put(lenv *env, lval *cur_name, lval *cur_fun);
+
 lval *lval_list_builtin(lenv *env, lval *cur);
+lval *lval_eval_builtin(lenv *env, lval *cur);
+
+lenv *lenv_copy(lenv *cur);
+void lenv_def(lenv *env, lval *name, lval *fun);
+lval *lval_copy(lval *cur);
+lval *lval_pop(lval *cur, int ind);
+lval *lval_take(lval *cur, int ind);
+lval *lval_fun_builtin(lenv *env, lval *cur);
+lval *lval_eval_s_expression(lenv *env, lval *cur);
+lval *lval_eval(lenv *env, lval *cur);
 
 char *readline(char *prompt) {
     fputs(prompt, stdout);
@@ -142,6 +158,13 @@ lval *lval_make_lambda(lval *formals, lval *body) {
     return ans;
 }
 
+lval *lval_make_bool(int val) {
+    lval *ans = malloc(sizeof(lval));
+    ans->type = LVAL_BOOL;
+    ans->num = val;
+    return ans;
+}
+
 lenv *lenv_make() {
     lenv *ans = malloc(sizeof(lenv));
     ans->par = NULL;
@@ -153,6 +176,7 @@ lenv *lenv_make() {
 
 void lval_delete(lval *cur) {
     switch (cur->type) {
+        case LVAL_BOOL: break;
         case LVAL_NUM: break;
         case LVAL_SYM:
             free(cur->sym);
@@ -179,7 +203,6 @@ void lval_delete(lval *cur) {
     }
     free(cur);
 }
-lval *lval_copy(lval *cur);
 
 void lenv_delete(lenv *cur) {
     for (int i = 0;i < cur->count;i++) {
@@ -305,7 +328,7 @@ lval *lval_call(lenv *env, lval *fun, lval *a) {
     lval_delete(a);
     if (fun->formals->count == 0) {
         fun->env->par = env;
-        return lval_eval_builtin(fun->env, lval_add(lval_make_s_expr(), fun->body));
+        return lval_eval_builtin(fun->env, lval_add(lval_make_s_expr(), lval_copy(fun->body)));
     }
     else
         return lval_copy(fun);
@@ -327,6 +350,7 @@ void lval_print_expr(lval *cur, char *open, char *close) {
 void lval_print(lval *cur) {
     // printf("print type %s\n", ltype_name(cur->type));
     switch (cur->type) {
+        case LVAL_BOOL:
         case LVAL_NUM:
             printf("%ld", cur->num);
             break;
@@ -381,6 +405,7 @@ lval *lval_copy(lval *cur) {
     ans->type = cur->type;
     switch (cur->type)
     {
+        case LVAL_BOOL:
         case LVAL_NUM:
             ans->num = cur->num;
             break;
@@ -528,7 +553,6 @@ lval *lval_join_builtin(lenv *env, lval *cur) {
     return ans;
 }
 
-
 lval *lval_eval_builtin(lenv *env, lval *cur) {
     LASSERT(cur, cur->count == 1, "ERROR: can eval only 1 Q-expression")
     LASSERT(cur, cur->cell[0]->type == LVAL_QEXPR, "ERROR: eval not Q-expression")
@@ -640,6 +664,114 @@ lval *lval_put_builtin(lenv *env, lval *cur) {
     return lval_var_builtin(env, cur, "=");
 }
 
+lval *lval_comp_builtin(lval *cur, char *comp_fun) {
+    LASSERT_NUM(comp_fun, cur, 2);
+    LASSERT_TYPE(comp_fun, cur, 0, LVAL_NUM);
+    LASSERT_TYPE(comp_fun, cur, 1, LVAL_NUM);
+    lval *f = lval_pop(cur, 0);
+    lval *s = lval_pop(cur, 0);
+    lval *ans = NULL;
+    if (strcmp("<", comp_fun) == 0)
+        ans = lval_make_bool(f->num < s->num);
+    if (strcmp("<=", comp_fun) == 0)
+        ans = lval_make_bool(f->num <= s->num);
+    if (strcmp(">", comp_fun) == 0)
+        ans = lval_make_bool(f->num > s->num);
+    if (strcmp(">=", comp_fun) == 0)
+        ans = lval_make_bool(f->num >= s->num);
+    if (strcmp("==", comp_fun) == 0)
+        ans = lval_make_bool(f->num == s->num);
+
+    lval_delete(f);
+    lval_delete(s);
+    lval_delete(cur);
+
+    if (ans == NULL)
+        return lval_make_error("invalid compare function");
+    else
+        return ans;
+}
+
+lval *lval_smaller_builtin(lenv *env, lval *cur) {
+    return lval_comp_builtin(cur, "<");
+}
+
+lval *lval_smaller_or_equal_builtin(lenv *env, lval *cur) {
+    return lval_comp_builtin(cur, "<=");
+}
+
+lval *lval_bigger_builtin(lenv *env, lval *cur) {
+    return lval_comp_builtin(cur, ">");
+}
+
+lval *lval_bigger_or_equal_builtin(lenv *env, lval *cur) {
+    return lval_comp_builtin(cur, ">=");
+}
+
+lval *lval_equal(lenv *env, lval *f, lval *s) {
+    switch (f->type) {
+        case (LVAL_BOOL):
+        case (LVAL_NUM):
+            return lval_make_bool(f->num == s->num);
+        case (LVAL_ERR):
+            return lval_make_bool(strcmp(f->err, s->err) == 0);
+        case (LVAL_SYM):
+            return lval_make_bool(strcmp(f->sym, s->sym) == 0);
+        case (LVAL_FUN):
+            lval *cur_ans;
+            if (f->builtin != 0)
+                cur_ans = lval_make_bool(f->builtin == s->builtin);
+            else {
+                lval *is_eq_formals = lval_equal(env, f->formals, s->formals);
+                lval *is_eq_body = lval_equal(env, f->body, s->body);
+                cur_ans = lval_make_bool(is_eq_body->num == 1 && is_eq_formals->num == 1);
+                lval_delete(is_eq_body);
+                lval_delete(is_eq_formals);
+            }
+            return cur_ans;
+        case (LVAL_SEXPR):
+        case (LVAL_QEXPR):
+            if (f->count != s->count) 
+                return lval_make_bool(0);
+            for (int i = 0;i < f->count;i++) {
+                lval *cur_eq = lval_equal(env, f->cell[i], s->cell[i]);
+                if (cur_eq->type != LVAL_BOOL || cur_eq->num == 0)
+                    return cur_eq;
+                lval_delete(cur_eq);
+            }
+            return lval_make_bool(1);
+    }
+    return lval_make_error("error in function ==");
+}
+
+lval *lval_equal_builtin(lenv *env, lval *cur) {
+    LASSERT_NUM("==", cur, 2);
+    // LASSERT(cur, cur->cell[0]->type == cur->cell[1]->type,
+    // "In function == values with different types: %s %s",
+    // ltype_name(cur->cell[0]->type), ltype_name(cur->cell[1]->type));
+    if (cur->cell[0]->type != cur->cell[1]->type)
+        return lval_make_bool(0);
+    lval *f = lval_pop(cur, 0);
+    lval *s = lval_pop(cur, 0);
+    lval *ans = lval_equal(env, f, s);
+    lval_delete(f);
+    lval_delete(s);
+    lval_delete(cur);
+    return ans;
+}
+
+lval *lval_not_equal_builtin(lenv *env, lval *cur) {
+    lval *cur_ans = lval_equal_builtin(env, cur);
+    if (cur_ans->type == LVAL_ERR)
+        return cur_ans;
+    else {
+        lval *ans = lval_make_bool((cur_ans->num + 1) % 2);
+        lval_delete(cur);
+        lval_delete(cur_ans);
+        return ans;
+    }
+}
+
 void lenv_add_builtin_functions(lenv *env, char *name, lbuiltin func) {
     lval *cur_lval_name = lval_make_sym(name);
     lval *cur_lval_func = lval_make_fun(func);
@@ -660,6 +792,32 @@ lval *lval_fun_builtin(lenv *env, lval *cur) {
     return lval_make_s_expr();
 }
 
+lval *lval_eval_comparison(lenv *env, lval *cur) {
+    lval *cur_fun = lval_pop(cur, 0);
+    return lval_call(env, cur_fun, cur);
+}
+
+lval *lval_if_builtin(lenv *env, lval *cur) {
+    LASSERT_NUM("if", cur, 3)
+    LASSERT_TYPE("if", cur, 0, LVAL_BOOL)
+    LASSERT_TYPE("if", cur, 1, LVAL_QEXPR)
+    LASSERT_TYPE("if", cur, 2, LVAL_QEXPR)
+
+    lval *expr_res = lval_pop(cur, 0);
+    lval *ans;
+
+    cur->cell[0]->type = LVAL_SEXPR;
+    cur->cell[1]->type = LVAL_SEXPR;
+    if (expr_res->num == 1)
+        ans = lval_eval(env, lval_pop(cur, 0));
+    else 
+        ans = lval_eval(env, lval_pop(cur, 1));
+    
+    lval_delete(expr_res);
+    lval_delete(cur);
+    return ans;
+}
+
 void lenv_add_functions(lenv *env) {
     lenv_add_builtin_functions(env, "+", lval_builtin_add);
     lenv_add_builtin_functions(env, "-", lval_builtin_sub);
@@ -670,14 +828,18 @@ void lenv_add_functions(lenv *env) {
     lenv_add_builtin_functions(env, "join", lval_join_builtin);
     lenv_add_builtin_functions(env, "list", lval_list_builtin);
     lenv_add_builtin_functions(env, "eval", lval_eval_builtin);
-    // lenv_add_builtin_functions(env, "def", lval_def_builtin);
     lenv_add_builtin_functions(env, "\\", lval_lambda_builtin);
     lenv_add_builtin_functions(env, "def", lval_def_builtin);
     lenv_add_builtin_functions(env, "=", lval_put_builtin);
     lenv_add_builtin_functions(env, "fun", lval_fun_builtin);
+    lenv_add_builtin_functions(env, "<", lval_smaller_builtin);
+    lenv_add_builtin_functions(env, "<=", lval_smaller_or_equal_builtin);
+    lenv_add_builtin_functions(env, ">", lval_bigger_builtin);
+    lenv_add_builtin_functions(env, ">=", lval_bigger_or_equal_builtin);
+    lenv_add_builtin_functions(env, "==", lval_equal_builtin);
+    lenv_add_builtin_functions(env, "!=", lval_not_equal_builtin);
+    lenv_add_builtin_functions(env, "if", lval_if_builtin);
 }
-
-// lval *lval_eval(lval *cur);
 
 lval *lval_eval_s_expression(lenv *env, lval *cur) {
     for (int i = 0;i < cur->count;i++) cur->cell[i] = lval_eval(env, cur->cell[i]);
