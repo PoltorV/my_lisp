@@ -47,6 +47,7 @@ struct lval {
     long num;
     char *err;
     char *sym;
+    char *str;
 
     lbuiltin builtin;
     lenv *env;
@@ -57,11 +58,21 @@ struct lval {
     struct lval** cell;    
 };
 
-enum {LVAL_NUM, LVAL_ERR, LVAL_SYM, LVAL_FUN, LVAL_SEXPR, LVAL_QEXPR, LVAL_BOOL};
+mpc_parser_t *Number;
+mpc_parser_t *Symbol;
+mpc_parser_t *String;
+mpc_parser_t *Comment;
+mpc_parser_t *S_expression;
+mpc_parser_t *Q_expression;
+mpc_parser_t *Expression;
+mpc_parser_t *Lispy;
+
+enum {LVAL_NUM, LVAL_ERR, LVAL_SYM, LVAL_FUN, LVAL_SEXPR, LVAL_QEXPR, LVAL_BOOL, LVAL_STR};
 
 lval *lval_make_num(long x);
 lval *lval_make_error(char *format, ...);
 lval *lval_make_sym(char *sym);
+lval *lval_make_str(char *str);
 lval *lval_make_s_expr();
 lval *lval_make_q_expr();
 lval *lval_make_fun(lbuiltin func);
@@ -85,6 +96,8 @@ lval *lval_take(lval *cur, int ind);
 lval *lval_fun_builtin(lenv *env, lval *cur);
 lval *lval_eval_s_expression(lenv *env, lval *cur);
 lval *lval_eval(lenv *env, lval *cur);
+
+void lval_print(lval *cur);
 
 char *readline(char *prompt) {
     fputs(prompt, stdout);
@@ -165,6 +178,14 @@ lval *lval_make_bool(int val) {
     return ans;
 }
 
+lval *lval_make_str(char *str) {
+    lval *ans = malloc(sizeof(lval));
+    ans->type = LVAL_STR;
+    ans->str = malloc(strlen(str) + 1);
+    strcpy(ans->str, str);
+    return ans;
+}
+
 lenv *lenv_make() {
     lenv *ans = malloc(sizeof(lenv));
     ans->par = NULL;
@@ -197,8 +218,11 @@ void lval_delete(lval *cur) {
             for (int i = 0;i < cur->count;i++) free(cur->cell[i]);
             free(cur->cell);
             break;
-        
+        case LVAL_STR:
+            free(cur->str);
+            break;
         default:
+            printf("ERROR HELP");
             break;
     }
     free(cur);
@@ -252,6 +276,17 @@ void lenv_put(lenv *env, lval *cur_name, lval *cur_fun) {
     //return env;///!!!!!!!!!!!
 }
 
+lval *lval_read_str(mpc_ast_t *cur) {
+    cur->contents[strlen(cur->contents) - 1] = '\0';
+    char *cur_str = malloc(strlen(cur->contents + 1) + 1);
+    strcpy(cur_str, cur->contents + 1);
+
+    cur_str = mpcf_unescape(cur_str);
+    lval *ans = lval_make_str(cur_str);
+    free(cur_str);
+    return ans;
+}
+
 lval *lval_read(mpc_ast_t *cur) {
     if (strstr(cur->tag, "number")) {
         errno = 0;
@@ -260,6 +295,9 @@ lval *lval_read(mpc_ast_t *cur) {
     }
     if (strstr(cur->tag, "symbol")) {
         return lval_make_sym(cur->contents);
+    }
+    if (strstr(cur->tag, "string")) {
+        return lval_read_str(cur);
     }
     lval *x = NULL;
     if (strcmp(cur->tag, ">") == 0) { x = lval_make_s_expr(); }
@@ -272,6 +310,7 @@ lval *lval_read(mpc_ast_t *cur) {
         if (strcmp(cur->children[i]->contents, "{") == 0) continue;
         if (strcmp(cur->children[i]->contents, "}") == 0) continue;
         if (strcmp(cur->children[i]->tag, "regex") == 0) continue;
+        if (strstr(cur->children[i]->tag, "comment")) continue;
         x = lval_add(x, lval_read(cur->children[i]));
     }
     return x;
@@ -334,7 +373,6 @@ lval *lval_call(lenv *env, lval *fun, lval *a) {
         return lval_copy(fun);
 }
 
-void lval_print(lval *cur);
 
 void lval_print_expr(lval *cur, char *open, char *close) {
     // if (cur->count == 0) return;
@@ -345,6 +383,14 @@ void lval_print_expr(lval *cur, char *open, char *close) {
         if (i < cur->count - 1) printf(" ");
     }
     printf("%s", close);
+}
+
+void lval_print_str(lval *cur) {
+    char *esc = malloc(strlen(cur) + 1);
+    strcpy(esc, cur->str);
+    esc = mpcf_escape(esc);
+    printf("\"%s\"", esc);
+    free(esc);
 }
 
 void lval_print(lval *cur) {
@@ -367,13 +413,16 @@ void lval_print(lval *cur) {
             }
             break;
         case LVAL_ERR:
-            printf("%s", cur->err);
+            printf("ERROR:%s", cur->err);
             break;
         case LVAL_SEXPR:
             lval_print_expr(cur, "(", ")");
             break;
         case LVAL_QEXPR:
             lval_print_expr(cur, "{", "}");
+            break;
+        case LVAL_STR:
+            lval_print_str(cur);
             break;
     }
 }
@@ -432,6 +481,10 @@ lval *lval_copy(lval *cur) {
             ans->count = cur->count;
             ans->cell = malloc(sizeof(lval*) * ans->count);
             for (int i = 0;i < ans->count;i++) ans->cell[i] = lval_copy(cur->cell[i]);
+            break;
+        case LVAL_STR:
+            ans->str = malloc(strlen(cur->str) + 1);
+            strcpy(ans->str, cur->str);
             break;
         default:
             break;
@@ -497,6 +550,7 @@ char* ltype_name(int t) {
         case LVAL_SYM: return "Symbol";
         case LVAL_SEXPR: return "S-Expression";
         case LVAL_QEXPR: return "Q-Expression";
+        case LVAL_STR: return "String";
         default: return "Unknown";
     }
 }
@@ -740,6 +794,8 @@ lval *lval_equal(lenv *env, lval *f, lval *s) {
                 lval_delete(cur_eq);
             }
             return lval_make_bool(1);
+        case (LVAL_STR):
+            return lval_make_bool(strcmp(f->str, s->str) == 0);
     }
     return lval_make_error("error in function ==");
 }
@@ -818,6 +874,52 @@ lval *lval_if_builtin(lenv *env, lval *cur) {
     return ans;
 }
 
+lval *lval_load_builtin(lenv *env, lval *cur) {
+    LASSERT_NUM("load", cur, 1)
+    LASSERT_TYPE("load", cur, 0, LVAL_STR);
+
+    mpc_result_t res;
+    if (mpc_parse_contents(cur->cell[0]->str, Lispy, &res)) {
+        lval *expr = lval_read(res.output);
+        while (expr->count) {
+            lval *cur_expr = lval_pop(expr, 0);
+            // lval_print(cur_expr);
+            // printf("\n");
+            lval *cur_ans = lval_eval(env, cur_expr);
+            if (cur_ans->type == LVAL_ERR)
+                lval_print(cur_ans);
+            lval_delete(cur_ans);
+        }
+
+        lval_delete(cur);
+        lval_delete(expr);
+        return lval_make_s_expr();
+    }
+    else {
+        mpc_err_print(res.error);
+        mpc_err_delete(res.error);
+        return lval_make_error("Error while loading file");
+    }
+}
+
+lval *lval_print_builtin(lenv *env, lval *cur) {
+    for (int i = 0;i < cur->count;i++) {
+        lval_print(cur->cell[i]);
+        printf(" ");
+    }
+    printf("\n");
+    lval_delete(cur);
+    return lval_make_s_expr();
+}
+
+lval *lval_error_builtin(lenv *env, lval *cur) {
+    LASSERT_NUM("error", cur, 1)
+    LASSERT_TYPE("error", cur, 0, LVAL_STR)
+    lval *error = lval_make_error(cur->cell[0]->str);
+    lval_delete(cur);
+    return error;
+}
+
 void lenv_add_functions(lenv *env) {
     lenv_add_builtin_functions(env, "+", lval_builtin_add);
     lenv_add_builtin_functions(env, "-", lval_builtin_sub);
@@ -839,6 +941,9 @@ void lenv_add_functions(lenv *env) {
     lenv_add_builtin_functions(env, "==", lval_equal_builtin);
     lenv_add_builtin_functions(env, "!=", lval_not_equal_builtin);
     lenv_add_builtin_functions(env, "if", lval_if_builtin);
+    lenv_add_builtin_functions(env, "load", lval_load_builtin);
+    lenv_add_builtin_functions(env, "print", lval_print_builtin);
+    lenv_add_builtin_functions(env, "error", lval_error_builtin);
 }
 
 lval *lval_eval_s_expression(lenv *env, lval *cur) {
@@ -877,28 +982,42 @@ lval *lval_eval(lenv *env, lval *cur) {
     return cur;
 }
 
-// int main(int argc, char *argv[]) {
-int main(void) {
+int main(int argc, char *argv[]) {
     // printf("\\\n");
-    mpc_parser_t *Number = mpc_new("number");
-    mpc_parser_t *Symbol = mpc_new("symbol");
-    mpc_parser_t *S_expression = mpc_new("s_expression");
-    mpc_parser_t *Q_expression = mpc_new("q_expression");
-    mpc_parser_t *Expression = mpc_new("expression");
-    mpc_parser_t *Lispy = mpc_new("lispy");
+    Number = mpc_new("number");
+    Symbol = mpc_new("symbol");
+    String = mpc_new("string");
+    Comment = mpc_new("comment");
+    S_expression = mpc_new("s_expression");
+    Q_expression = mpc_new("q_expression");
+    Expression = mpc_new("expression");
+    Lispy = mpc_new("lispy");
 
     mpca_lang(MPCA_LANG_DEFAULT,
     " number : /-?[0-9]+/; "
     " symbol : /[a-zA-Z0-9_+\\-*\\/\\\\=<>!&]+/ ; "
+    " string : /\"(\\\\.|[^\"])*\"/ ; "
+    " comment : /;[^\\r\\n]*/ ;"
     " s_expression : '(' <expression>* ')' ; "
     " q_expression : '{' <expression>* '}' ; "
-    " expression : <number> | <symbol> | <s_expression> | <q_expression> ;"
+    " expression : <number> | <symbol> | <string> | <comment> | <s_expression> | <q_expression> ;"
     " lispy : /^/ <expression>* /$/; ",
-    Number, Symbol, S_expression, Q_expression, Expression, Lispy, NULL
+    Number, Symbol, String, Comment, S_expression, Q_expression, Expression, Lispy, NULL
     );
 
     lenv *env = lenv_make();
     lenv_add_functions(env);
+
+    if (argc >= 2) {
+        for (int i = 1;i < argc;i++) {
+            lval *cur = lval_add(lval_make_s_expr(), lval_make_str(argv[i]));
+            lval *cur_ans = lval_load_builtin(env, cur);
+            lval_print(cur_ans);
+            
+            lval_delete(cur_ans);
+        }
+    }
+
     while (1) {
         char *input = readline("lisp >");
         //add_history(input);
@@ -919,6 +1038,6 @@ int main(void) {
         free(input);
     }
     
-    mpc_cleanup(6, Number, Symbol, S_expression, Q_expression, Expression, Lispy);
+    mpc_cleanup(8, Number, Symbol, String, Comment, S_expression, Q_expression, Expression, Lispy);
     return 0;
 }
