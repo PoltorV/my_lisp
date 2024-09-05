@@ -386,7 +386,7 @@ void lval_print_expr(lval *cur, char *open, char *close) {
 }
 
 void lval_print_str(lval *cur) {
-    char *esc = malloc(strlen(cur) + 1);
+    char *esc = malloc(strlen(cur->str) + 1);
     strcpy(esc, cur->str);
     esc = mpcf_escape(esc);
     printf("\"%s\"", esc);
